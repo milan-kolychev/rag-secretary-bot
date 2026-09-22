@@ -1,0 +1,36 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: docker/bot.Dockerfile
+    env_file: .env
+    restart: unless-stopped
+
+  # RAG API on FastAPI, sprint 3. Owner: B.
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/api.Dockerfile
+  #   env_file: .env
+  #   depends_on: [postgres, qdrant, llm]
+  #   restart: unless-stopped
+
+  # Request history and document metadata. Owner: A.
+  # postgres:
+  #   image: postgres:16
+  #   env_file: .env
+  #   volumes:
+  #     - ./data/postgres:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+  # Vector store for document chunks. Owner: A.
+  # qdrant:
+  #   image: qdrant/qdrant
+  #   volumes:
+  #     - ./qdrant_storage:/qdrant/storage
+  #   restart: unless-stopped
+
+  # Local LLM server, image not chosen yet. Owner: A.
+  # llm:
+  #   image: <tbd>
+  #   restart: unless-stopped
