@@ -1,0 +1,75 @@
+@startuml 04_use_cases
+!include _style.iuml
+left to right direction
+skinparam usecaseBorderThickness 1
+skinparam usecaseBorderThickness<<уникальный>> 3
+skinparam usecaseFontStyle<<уникальный>> bold
+skinparam nodesep 12
+skinparam ranksep 40
+
+actor "Студент" as S
+
+rectangle "RAG-система для секретарей ФПИ" {
+  usecase "UC1. Задать вопрос" as UC1
+  usecase "UC4. Оценить ответ" as UC4
+  usecase "UC5. Передать\nвопрос секретарю" as UC5 <<уникальный>>
+  usecase "UC14. Просмотреть\nсвои обращения" as UC14
+
+  usecase "UC2. Получить ответ\nпо документам со\nссылкой на источник" as UC2 <<уникальный>>
+  usecase "UC6. Подготовить\nчерновик ответа" as UC6 <<уникальный>>
+  usecase "UC3. Найти фрагменты\nдокументов" as UC3
+  usecase "UC18. Проиндексировать\nдокумент" as UC18
+
+  usecase "UC7. Ответить\nна обращение" as UC7
+  usecase "UC8. Просмотреть\nнеотвеченные\nобращения" as UC8
+  usecase "UC13. Просмотреть\nисторию обращений" as UC13
+  usecase "UC11. Искать по\nдокументам" as UC11
+  usecase "UC9. Загрузить\nдокумент" as UC9
+  usecase "UC10. Обновить или\nудалить документ" as UC10
+  usecase "UC12. Синхронизировать\nдокументы с\nЯндекс.Диска" as UC12
+  usecase "UC16. Назначить\nсекретарей" as UC16
+  usecase "UC17. Развернуть\nсистему" as UC17
+  usecase "UC15. Просмотреть\nстатистику" as UC15
+}
+
+actor "Секретарь" as Sec
+actor "n8n\n(по расписанию)" as N8N
+actor "Администратор\nсистемы" as Adm
+actor "Представитель\nфакультета" as Fac
+
+S -- UC1
+S -- UC4
+S -- UC5
+S -- UC14
+UC1 ..> UC2 : <<include>>
+UC5 ..> UC2 : <<extend>>
+UC5 ..> UC6 : <<include>>
+UC2 ..> UC3 : <<include>>
+
+UC3 <.. UC11 : <<include>>
+UC18 <.. UC9 : <<include>>
+UC18 <.. UC10 : <<include>>
+UC18 <.. UC12 : <<include>>
+UC6 -[hidden]- UC7
+UC6 -[hidden]- UC8
+UC6 -[hidden]- UC13
+UC18 -[hidden]- UC16
+UC18 -[hidden]- UC17
+UC18 -[hidden]- UC15
+
+UC7 -- Sec
+UC8 -- Sec
+UC13 -- Sec
+UC11 -- Sec
+UC9 -- Sec
+UC10 -- Sec
+UC12 -- N8N
+UC16 -- Adm
+UC17 -- Adm
+UC15 -- Fac
+
+legend bottom left
+  Жирная рамка и стереотип «уникальный»: уникальные сервисы проекта.
+  UC5 расширяет UC2, если оценка найденных фрагментов ниже порога.
+endlegend
+@enduml

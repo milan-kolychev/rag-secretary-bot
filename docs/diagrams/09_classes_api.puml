@@ -1,0 +1,117 @@
+@startuml 09_classes_api
+!include _style.iuml
+skinparam classAttributeIconSize 0
+skinparam defaultFontSize 13
+hide empty members
+hide circle
+
+package "api" {
+  class ApiSettings <<BaseSettings>> {
+    +api_token: SecretStr
+    +rag_engine: str
+    +rag_timeout: float
+    +api_host: str
+    +api_port: int
+    +log_level: str
+  }
+
+  interface RagEngine <<Protocol>> {
+    +answer(question: str): RagAnswer
+  }
+
+  class StubRagEngine {
+    +answer(question: str): RagAnswer
+  }
+
+  class RagAnswer <<BaseModel>> {
+    +status: answered | no_answer
+    +text: str
+    +sources: list[Source]
+    +check_text(): RagAnswer
+  }
+
+  class Source <<BaseModel>> {
+    +document_id: UUID
+    +title: str
+    +section: str | None
+  }
+
+  class AskRequest <<BaseModel>> {
+    +question: str
+    +user_id: int
+  }
+
+  class AskResponse <<BaseModel>> {
+    +answer_id: UUID
+    +status: answered | no_answer | escalated
+    +text: str
+    +sources: list[Source]
+    +ticket_id: UUID | None
+  }
+
+  class Error <<BaseModel>> {
+    +error: ErrorDetail
+  }
+
+  class ErrorDetail <<BaseModel>> {
+    +code: ErrorCode
+    +message: str
+  }
+
+  class ApiError <<Exception>> {
+    +status_code: int
+    +code: ErrorCode
+    +message: str
+  }
+
+  class RagUnavailableError <<Exception>>
+
+  class app <<module>> {
+    +create_app(settings, engine): FastAPI
+    +health(): Health
+    +ask(request: AskRequest): AskResponse
+  }
+
+  class engine <<module>> {
+    +load_engine(spec: str): RagEngine
+  }
+}
+
+package "worker (RAG-ядро, участник A)" {
+  class RagPipeline <<проект>> {
+    +answer(question: str): RagAnswer
+  }
+  class Embedder <<проект>>
+  class VectorStore <<проект>>
+  class LLMClient <<проект>>
+  class TicketRepository <<проект>>
+}
+
+StubRagEngine ..|> RagEngine
+RagPipeline ..|> RagEngine
+RagPipeline --> Embedder
+RagPipeline --> VectorStore
+RagPipeline --> LLMClient
+RagEngine ..> RagAnswer : возвращает
+RagEngine ..> RagUnavailableError : выбрасывает
+RagAnswer "1" *-- "0..*" Source
+AskResponse "1" *-- "0..*" Source
+Error *-- ErrorDetail
+
+app ..> ApiSettings
+app ..> RagEngine : вызывает в пуле потоков
+app ..> AskRequest
+app ..> AskResponse
+app ..> ApiError
+app ..> Error
+app ..> TicketRepository : спринт 3
+engine ..> StubRagEngine
+engine ..> RagPipeline : создаёт по RAG_ENGINE
+
+note bottom of RagPipeline
+  Имя класса и состав ядра уточняет участник A.
+  Атрибуты и методы Embedder, VectorStore,
+  LLMClient, TicketRepository добавляются
+  после проектирования ядра (задача 11).
+end note
+@enduml

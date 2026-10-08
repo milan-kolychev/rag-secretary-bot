@@ -36,3 +36,6 @@ qdrant_storage/
 
 # Generated docs
 docs/api/
+
+# Generated mockup pages
+docs/diagrams/mockups/*.html

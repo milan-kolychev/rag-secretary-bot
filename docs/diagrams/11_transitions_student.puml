@@ -1,0 +1,25 @@
+@startuml 11_transitions_student
+!include _style.iuml
+skinparam defaultFontSize 13
+hide empty description
+
+state "Нет состояния\n(основное меню)" as Idle
+state "Ожидание вопроса\nQuestionFlow.waiting_question" as Waiting
+state "Обработка вопроса\n(ожидание ответа POST /ask)" as Processing
+
+[*] --> Idle : /start
+Idle --> Waiting : /ask или «Задать вопрос»
+Idle --> Processing : текст в личном чате
+Waiting --> Processing : текст вопроса
+Waiting --> Waiting : пустой или длинный вопрос,\nнетекстовое сообщение
+Waiting --> Idle : /cancel, /start
+Processing --> Idle : answered, no_answer, escalated\n(состояние сбрасывается)
+Processing --> Waiting : ошибка API\n(вопрос пришёл\nиз ожидания)
+Processing --> Idle : ошибка API\n(вопрос пришёл из меню)
+Idle --> Idle : /help, «Помощь»,\nкнопки оценки,\n«Позвать секретаря»
+
+legend bottom
+  Состояния хранятся в FSM aiogram. «Обработка вопроса» в FSM
+  не сохраняется: это время ожидания ответа API.
+endlegend
+@enduml

@@ -1,0 +1,117 @@
+@startuml 09_classes_bot
+!include _style.iuml
+skinparam classAttributeIconSize 0
+skinparam defaultFontSize 13
+hide empty members
+hide circle
+
+package "bot" {
+  class Settings <<BaseSettings>> {
+    +bot_token: SecretStr
+    +log_level: str
+    +secretary_ids: set[int]
+    +max_question_length: int
+    +api_url: AnyHttpUrl | None
+    +api_token: SecretStr
+    +answer_timeout: float
+    +check_token(value): SecretStr
+    +parse_secretary_ids(value): set[int]
+    +check_api_token(): Settings
+  }
+
+  interface AnswerClient <<Protocol>> {
+    +ask(question: str, user_id: int): Answer
+  }
+
+  class HttpAnswerClient {
+    +timeout: float
+    -_client: httpx.AsyncClient
+    +ask(question: str, user_id: int): Answer
+    +aclose(): None
+  }
+
+  class StubAnswerClient {
+    +delay: float
+    +ask(question: str, user_id: int): Answer
+  }
+
+  class Answer <<BaseModel>> {
+    +answer_id: str
+    +text: str
+    +sources: list[Source]
+    +status: answered | no_answer | escalated
+  }
+
+  class Source <<BaseModel>> {
+    +title: str
+    +section: str | None
+  }
+
+  class AnswerClientError <<Exception>>
+  class AnswerTimeoutError
+  class AnswerUnavailableError
+
+  class QuestionFlow <<StatesGroup>> {
+    +waiting_question: State
+  }
+
+  enum Action {
+    LIKE
+    DISLIKE
+    SECRETARY
+  }
+
+  class AnswerCallback <<CallbackData>> {
+    +answer_id: str
+    +action: Action
+  }
+
+  class LoggingMiddleware <<BaseMiddleware>> {
+    +__call__(handler, event, data)
+  }
+
+  class RoleMiddleware <<BaseMiddleware>> {
+    +secretary_ids: set[int]
+    +__call__(handler, event, data)
+  }
+
+  class handlers <<module>> {
+    +start(message, state)
+    +show_help(message)
+    +ask(message, state)
+    +cancel(message, state)
+    +unknown_command(message)
+    +handle_question(message, state, bot, answer_client, settings)
+    +ask_for_text(message)
+    +rate_answer(callback, callback_data)
+    +call_secretary(callback, callback_data)
+  }
+
+  class app <<module>> {
+    +create_bot(settings): Bot
+    +create_answer_client(settings): AnswerClient
+    +create_dispatcher(settings, client): Dispatcher
+  }
+}
+
+HttpAnswerClient ..|> AnswerClient
+StubAnswerClient ..|> AnswerClient
+AnswerClient ..> Answer : возвращает
+Answer "1" *-- "0..*" Source
+AnswerTimeoutError --|> AnswerClientError
+AnswerUnavailableError --|> AnswerClientError
+AnswerClient ..> AnswerClientError : выбрасывает
+AnswerCallback --> Action
+
+app ..> Settings
+app ..> HttpAnswerClient : создаёт
+app ..> StubAnswerClient : создаёт
+app ..> LoggingMiddleware
+app ..> RoleMiddleware
+app ..> handlers : регистрирует
+handlers ..> AnswerClient
+handlers ..> QuestionFlow
+handlers ..> AnswerCallback
+LoggingMiddleware -[hidden]down- RoleMiddleware
+Settings -[hidden]down- AnswerCallback
+@enduml

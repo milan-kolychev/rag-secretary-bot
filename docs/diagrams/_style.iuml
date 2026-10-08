@@ -1,0 +1,19 @@
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName "Liberation Serif"
+skinparam defaultFontSize 14
+skinparam dpi 150
+skinparam ArrowColor black
+skinparam backgroundColor white
+skinparam usecaseBackgroundColor white
+skinparam actorBackgroundColor white
+skinparam classBackgroundColor white
+skinparam activityBackgroundColor white
+skinparam stateBackgroundColor white
+skinparam noteBackgroundColor white
+skinparam partitionBackgroundColor white
+skinparam swimlaneTitleBackgroundColor white
+skinparam legendBackgroundColor white
+skinparam packageBackgroundColor white
+skinparam rectangleBackgroundColor white
+skinparam activityDiamondBackgroundColor white

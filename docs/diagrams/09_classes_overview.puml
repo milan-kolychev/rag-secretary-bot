@@ -1,0 +1,53 @@
+@startuml 09_classes_overview
+!include _style.iuml
+skinparam defaultFontSize 13
+hide members
+hide circle
+
+package "bot" {
+  class "app" as bapp <<module>>
+  class handlers <<module>>
+  interface AnswerClient <<Protocol>>
+  class HttpAnswerClient
+  class StubAnswerClient
+  class Answer
+  class Settings
+}
+
+package "api" {
+  class "app" as aapp <<module>>
+  interface RagEngine <<Protocol>>
+  class StubRagEngine
+  class AskRequest
+  class AskResponse
+  class ApiSettings
+}
+
+package "worker (участник A)" {
+  class RagPipeline <<проект>>
+  class Embedder <<проект>>
+  class VectorStore <<проект>>
+  class LLMClient <<проект>>
+  class TicketRepository <<проект>>
+}
+
+bapp ..> Settings
+bapp ..> handlers
+handlers ..> AnswerClient
+HttpAnswerClient ..|> AnswerClient
+StubAnswerClient ..|> AnswerClient
+AnswerClient ..> Answer
+
+HttpAnswerClient ..> aapp : HTTP POST /ask\n(контракт openapi.yaml)
+
+aapp ..> ApiSettings
+aapp ..> AskRequest
+aapp ..> AskResponse
+aapp ..> RagEngine
+StubRagEngine ..|> RagEngine
+RagPipeline ..|> RagEngine
+RagPipeline --> Embedder
+RagPipeline --> VectorStore
+RagPipeline --> LLMClient
+aapp ..> TicketRepository
+@enduml
