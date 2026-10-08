@@ -7,9 +7,8 @@ import sys
 
 from pydantic import ValidationError
 
-from bot.app import create_bot, create_dispatcher
-from bot.config import get_settings
-from bot.services.answer_client import StubAnswerClient
+from bot.app import create_answer_client, create_bot, create_dispatcher
+from bot.config import format_errors, get_settings
 
 
 def main() -> None:
@@ -17,7 +16,7 @@ def main() -> None:
     try:
         settings = get_settings()
     except ValidationError as exc:
-        sys.exit(f"Invalid configuration, check .env:\n{exc}")
+        sys.exit(f"Invalid configuration, check .env:\n{format_errors(exc)}")
 
     logging.basicConfig(
         level=settings.log_level,
@@ -26,7 +25,7 @@ def main() -> None:
     # LoggingMiddleware already logs every update with latency.
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
-    client = StubAnswerClient()
+    client = create_answer_client(settings)
     bot = create_bot(settings)
     dp = create_dispatcher(settings, client)
 

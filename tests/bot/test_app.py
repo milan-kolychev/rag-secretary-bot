@@ -6,10 +6,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import User
 
 from bot import texts
-from bot.app import create_bot, create_dispatcher
+from bot.app import create_answer_client, create_bot, create_dispatcher
 from bot.config import Settings
 from bot.middlewares.roles import RoleMiddleware
 from bot.services.answer_client import StubAnswerClient
+from bot.services.http_answer_client import HttpAnswerClient
 from bot.states import QuestionFlow
 from tests.bot.helpers import SECRETARY_ID, USER_ID, FakeSession, message_update
 
@@ -123,3 +124,23 @@ async def test_role_middleware(user: User | None, expected: bool) -> None:
     handler = AsyncMock()
     await RoleMiddleware({SECRETARY_ID})(handler, object(), {"event_from_user": user})
     assert handler.await_args.args[1]["is_secretary"] is expected
+
+
+async def test_answer_client_is_stub_without_api_url(settings: Settings) -> None:
+    assert isinstance(create_answer_client(settings), StubAnswerClient)
+
+
+async def test_answer_client_is_http_with_api_url() -> None:
+    settings = Settings(
+        _env_file=None,
+        bot_token="42:TEST",
+        api_url="http://api:8000",
+        api_token="t",
+        answer_timeout=12,
+    )
+    client = create_answer_client(settings)
+    assert isinstance(client, HttpAnswerClient)
+    assert client.timeout == 12
+    assert str(client._client.base_url) == "http://api:8000/"
+    assert client._client.headers["Authorization"] == "Bearer t"
+    await client.aclose()

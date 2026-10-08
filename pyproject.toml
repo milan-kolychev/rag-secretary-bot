@@ -1,23 +1,29 @@
 [project]
 name = "rag-secretary-bot"
 version = "0.1.0"
-description = "Telegram-бот для ответов на учебные вопросы студентов ФПИ по документам факультета"
+description = "RAG-система для секретарей ФПИ: Telegram-бот и API ядра"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiogram>=3.31,<4",
+    "fastapi>=0.142,<1",
+    "httpx>=0.28,<1",
     "pydantic-settings>=2.15,<3",
+    "uvicorn>=0.54,<1",
 ]
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26",
     "mypy>=2.3",
     "pdoc>=16.0",
     "pre-commit>=4.6",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
     "pytest-cov>=7.1",
+    "pyyaml>=6.0",
     "ruff>=0.16",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.ruff]

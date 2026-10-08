@@ -10,7 +10,15 @@ from tests.bot.helpers import SECRETARY_ID, FakeSession
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("BOT_TOKEN", "LOG_LEVEL", "SECRETARY_IDS", "MAX_QUESTION_LENGTH"):
+    for name in (
+        "BOT_TOKEN",
+        "LOG_LEVEL",
+        "SECRETARY_IDS",
+        "MAX_QUESTION_LENGTH",
+        "API_URL",
+        "API_TOKEN",
+        "ANSWER_TIMEOUT",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 

@@ -1,0 +1,799 @@
+openapi: 3.1.0
+info:
+  title: RAG-система для секретарей ФПИ
+  version: 1.0.0
+  description: |
+    Контракт между Telegram-ботом и ядром системы (задача 3 бэклога спринта 2).
+
+    Все эндпоинты, кроме `/health`, требуют сервисный токен в заголовке
+    `Authorization: Bearer <API_TOKEN>`. Токен общий для бота и n8n и задаётся в `.env`.
+
+    Поле `x-sprint` у операции показывает спринт, в котором она реализуется.
+    В MVP v1.0 (спринт 2) реализованы `/health` и `/ask`.
+
+    Ошибки всех эндпоинтов возвращаются в одном формате (`Error`).
+    Сообщение об ошибке никогда не содержит текст вопроса пользователя.
+
+servers:
+  - url: http://localhost:8000
+    description: локальный запуск
+  - url: http://api:8000
+    description: внутри сети Docker Compose
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: service
+  - name: ask
+    description: Ответ студенту (эпик Э1)
+  - name: tickets
+    description: Обращения и эскалация секретарю (эпики Э2, Э4)
+  - name: documents
+    description: База знаний (эпик Э3)
+  - name: search
+    description: Поиск по документам для секретаря (эпик Э3)
+
+paths:
+  /health:
+    get:
+      tags: [service]
+      operationId: health
+      summary: Проверка доступности API
+      x-sprint: 2
+      security: []
+      responses:
+        "200":
+          description: API работает
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /ask:
+    post:
+      tags: [ask]
+      operationId: ask
+      summary: Ответ на вопрос студента по документам
+      description: |
+        Синхронный запрос. Целевое время ответа p95 не больше 10 с; бот ждёт ответ
+        не дольше `ANSWER_TIMEOUT` (по умолчанию 30 с).
+
+        Статусы ответа:
+        - `answered`: ответ найден, `text` и `sources` заполнены;
+        - `no_answer`: оценка найденных фрагментов ниже порога, `text` пустой,
+          студенту предлагается позвать секретаря;
+        - `escalated`: вопрос автоматически передан секретарю, `ticket_id` заполнен
+          (со спринта 3).
+      x-sprint: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+      responses:
+        "200":
+          description: Ответ сформирован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /answers/{answer_id}/feedback:
+    post:
+      tags: [ask]
+      operationId: rateAnswer
+      summary: Оценка ответа студентом (кнопки 👍 и 👎)
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/AnswerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackRequest"
+      responses:
+        "204":
+          description: Оценка сохранена; повторная оценка заменяет предыдущую
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /tickets:
+    post:
+      tags: [tickets]
+      operationId: createTicket
+      summary: Передача вопроса секретарю (кнопка «Позвать секретаря»)
+      description: Создаёт обращение с черновиком ответа. Повторный вызов для того же
+        `answer_id` возвращает уже созданное обращение с кодом 200.
+      x-sprint: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketCreate"
+      responses:
+        "200":
+          description: Обращение по этому ответу уже существует
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "201":
+          description: Обращение создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      tags: [tickets]
+      operationId: listTickets
+      summary: Список обращений (история для секретаря)
+      x-sprint: 3
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TicketStatus"
+        - name: user_id
+          in: query
+          required: false
+          description: Обращения одного студента
+          schema:
+            $ref: "#/components/schemas/TelegramId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Страница обращений, новые сверху
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /tickets/{ticket_id}:
+    get:
+      tags: [tickets]
+      operationId: getTicket
+      summary: Карточка обращения
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      responses:
+        "200":
+          description: Обращение
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /tickets/{ticket_id}/reply:
+    post:
+      tags: [tickets]
+      operationId: replyTicket
+      summary: Ответ секретаря на обращение
+      description: Сохраняет ответ и переводит обращение в статус `answered`.
+        Отправку ответа студенту выполняет бот.
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketReply"
+      responses:
+        "200":
+          description: Ответ сохранён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /tickets/{ticket_id}/close:
+    post:
+      tags: [tickets]
+      operationId: closeTicket
+      summary: Закрытие обращения без ответа
+      description: Переводит обращение в статус `closed` (вопрос не по учёбе, дубликат).
+        Студенту ответ не отправляется.
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketClose"
+      responses:
+        "200":
+          description: Обращение закрыто
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /documents:
+    get:
+      tags: [documents]
+      operationId: listDocuments
+      summary: Список документов базы знаний
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Страница документов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [documents]
+      operationId: uploadDocument
+      summary: Загрузка документа или его новой версии
+      description: |
+        Файл сохраняется, индексация выполняется в worker асинхронно; статус
+        документа проверяется через `GET /documents/{document_id}`.
+        Если документ с таким `title` уже есть, создаётся новая версия, а старые
+        фрагменты удаляются из Qdrant после индексации новой.
+        Используется ботом (секретарь) и n8n (синхронизация с Яндекс.Диском).
+      x-sprint: 3
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/DocumentUpload"
+      responses:
+        "202":
+          description: Документ принят в индексацию
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /documents/{document_id}:
+    get:
+      tags: [documents]
+      operationId: getDocument
+      summary: Сведения о документе и статус индексации
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Документ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [documents]
+      operationId: deleteDocument
+      summary: Удаление документа из базы знаний
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "204":
+          description: Документ и его фрагменты удалены
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /search:
+    post:
+      tags: [search]
+      operationId: search
+      summary: Поиск фрагментов документов для секретаря
+      description: Тот же поиск, что и в `/ask`, но без генерации ответа LLM.
+      x-sprint: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Найденные фрагменты по убыванию оценки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Сервисный токен `API_TOKEN` из `.env`
+
+  parameters:
+    AnswerId:
+      name: answer_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    TicketId:
+      name: ticket_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    Unauthorized:
+      description: Токен не передан или неверен
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: {code: unauthorized, message: Invalid or missing API token}
+    NotFound:
+      description: Объект не найден
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Действие недопустимо в текущем статусе объекта
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooLarge:
+      description: Файл больше допустимого размера
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationError:
+      description: Запрос не прошёл проверку
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: {code: validation_error, message: "question: String should have at most 1000 characters"}
+    ServiceUnavailable:
+      description: LLM, модель эмбеддингов или Qdrant недоступны либо не ответили вовремя
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: {code: rag_timeout, message: RAG engine did not answer in 25 s}
+    InternalError:
+      description: Непредвиденная ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Id:
+      type: string
+      format: uuid
+      description: Идентификатор в формате UUID (36 символов). Длина важна для бота
+        (callback data кнопки Telegram ограничена 64 байтами).
+      maxLength: 36
+
+    TelegramId:
+      type: integer
+      format: int64
+      minimum: 1
+      maximum: 9223372036854775807
+      description: Telegram ID пользователя
+
+    Health:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          const: ok
+
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - not_found
+                - method_not_allowed
+                - conflict
+                - too_large
+                - validation_error
+                - rag_unavailable
+                - rag_timeout
+                - internal_error
+            message:
+              type: string
+              description: Текст для логов, не для пользователя
+
+    AskRequest:
+      type: object
+      required: [question, user_id]
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Текст вопроса без пробелов по краям. Строка только из пробелов
+            отклоняется с `validation_error`.
+        user_id:
+          $ref: "#/components/schemas/TelegramId"
+
+    AnswerStatus:
+      type: string
+      enum: [answered, no_answer, escalated]
+
+    Source:
+      type: object
+      required: [document_id, title, section]
+      additionalProperties: false
+      properties:
+        document_id:
+          $ref: "#/components/schemas/Id"
+        title:
+          type: string
+          minLength: 1
+          description: Название документа
+        section:
+          type: [string, "null"]
+          description: Раздел или пункт документа, если известен
+
+    AskResponse:
+      type: object
+      required: [answer_id, status, text, sources, ticket_id]
+      additionalProperties: false
+      properties:
+        answer_id:
+          $ref: "#/components/schemas/Id"
+        status:
+          $ref: "#/components/schemas/AnswerStatus"
+        text:
+          type: string
+          description: Текст ответа; пустая строка при `no_answer` и `escalated`
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Source"
+          description: Пустой список при `no_answer` и `escalated`
+        ticket_id:
+          oneOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+          description: Заполнен только при `escalated`
+
+    FeedbackRequest:
+      type: object
+      required: [user_id, rating]
+      additionalProperties: false
+      properties:
+        user_id:
+          $ref: "#/components/schemas/TelegramId"
+        rating:
+          type: string
+          enum: [like, dislike]
+
+    TicketStatus:
+      type: string
+      enum: [open, answered, closed]
+      description: |
+        - `open`: ждёт ответа секретаря;
+        - `answered`: секретарь ответил;
+        - `closed`: закрыто без ответа (дубликат, вопрос не по учёбе),
+          см. `POST /tickets/{ticket_id}/close`.
+
+    TicketCreate:
+      type: object
+      required: [answer_id, user_id, reason]
+      additionalProperties: false
+      properties:
+        answer_id:
+          $ref: "#/components/schemas/Id"
+        user_id:
+          $ref: "#/components/schemas/TelegramId"
+        reason:
+          type: string
+          enum: [user_request, no_answer]
+          description: "`user_request`: студент нажал «Позвать секретаря» под ответом;
+            `no_answer`: ответа в документах нет"
+
+    TicketReply:
+      type: object
+      required: [secretary_id, text]
+      additionalProperties: false
+      properties:
+        secretary_id:
+          $ref: "#/components/schemas/TelegramId"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+
+    TicketClose:
+      type: object
+      required: [secretary_id]
+      additionalProperties: false
+      properties:
+        secretary_id:
+          $ref: "#/components/schemas/TelegramId"
+
+    Ticket:
+      type: object
+      required:
+        - ticket_id
+        - answer_id
+        - user_id
+        - question
+        - status
+        - fragments
+        - draft
+        - reply
+        - secretary_id
+        - created_at
+        - answered_at
+      additionalProperties: false
+      properties:
+        ticket_id:
+          $ref: "#/components/schemas/Id"
+        answer_id:
+          $ref: "#/components/schemas/Id"
+        user_id:
+          $ref: "#/components/schemas/TelegramId"
+        question:
+          type: string
+        status:
+          $ref: "#/components/schemas/TicketStatus"
+        fragments:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+          description: Найденные фрагменты с источниками для карточки секретаря (US2.2)
+        draft:
+          type: [string, "null"]
+          description: Черновик ответа для секретаря (уникальный сервис)
+        reply:
+          type: [string, "null"]
+          description: Ответ секретаря
+        secretary_id:
+          oneOf:
+            - $ref: "#/components/schemas/TelegramId"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        answered_at:
+          type: [string, "null"]
+          format: date-time
+
+    TicketList:
+      type: object
+      required: [items, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+        total:
+          type: integer
+          minimum: 0
+
+    DocumentStatus:
+      type: string
+      enum: [indexing, indexed, failed]
+
+    DocumentUpload:
+      type: object
+      required: [file, title]
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          description: PDF, DOCX или TXT, не больше 20 МБ
+        title:
+          type: string
+          minLength: 1
+          maxLength: 300
+
+    Document:
+      type: object
+      required:
+        - document_id
+        - title
+        - filename
+        - version
+        - status
+        - chunks
+        - uploaded_at
+        - indexed_at
+        - error
+      additionalProperties: false
+      properties:
+        document_id:
+          $ref: "#/components/schemas/Id"
+        title:
+          type: string
+        filename:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/DocumentStatus"
+        chunks:
+          type: [integer, "null"]
+          minimum: 0
+          description: Число фрагментов после индексации
+        uploaded_at:
+          type: string
+          format: date-time
+        indexed_at:
+          type: [string, "null"]
+          format: date-time
+        error:
+          type: [string, "null"]
+          description: Причина ошибки при `failed`
+
+    DocumentList:
+      type: object
+      required: [items, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Document"
+        total:
+          type: integer
+          minimum: 0
+
+    SearchRequest:
+      type: object
+      required: [query]
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+
+    SearchHit:
+      type: object
+      required: [document_id, title, section, text, score]
+      additionalProperties: false
+      properties:
+        document_id:
+          $ref: "#/components/schemas/Id"
+        title:
+          type: string
+        section:
+          type: [string, "null"]
+        text:
+          type: string
+          description: Текст фрагмента
+        score:
+          type: number
+          description: Оценка релевантности, больше значит ближе
+
+    SearchResponse:
+      type: object
+      required: [results]
+      additionalProperties: false
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"

@@ -1,36 +1,84 @@
 services:
+  # Telegram bot. Owner: B.
   bot:
     build:
       context: .
       dockerfile: docker/bot.Dockerfile
     env_file: .env
+    environment:
+      # Inside the Compose network the API is reachable by service name.
+      API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
-  # RAG API on FastAPI, sprint 3. Owner: B.
-  # api:
-  #   build:
-  #     context: .
-  #     dockerfile: docker/api.Dockerfile
-  #   env_file: .env
-  #   depends_on: [postgres, qdrant, llm]
-  #   restart: unless-stopped
+  # Core REST API (FastAPI). Owner: B.
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    env_file: .env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    ports:
+      # Only from this machine: for curl, Swagger UI (/docs) and local bot runs.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    # BGE-M3 runs inside the API via PyTorch. Uncomment together with the real
+    # RAG_ENGINE (needs NVIDIA Container Toolkit or Docker Desktop with WSL 2 GPU support).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
-  # Request history and document metadata. Owner: A.
-  # postgres:
-  #   image: postgres:16
-  #   env_file: .env
-  #   volumes:
-  #     - ./data/postgres:/var/lib/postgresql/data
-  #   restart: unless-stopped
+  # Request history and document metadata. Schema: A, service: B.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fpi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-fpi_rag}
+    ports:
+      # Only from this machine: for migrations and local development.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
-  # Vector store for document chunks. Owner: A.
+  # Vector store for document chunks. Owner: A (sprint 2, task 15).
   # qdrant:
   #   image: qdrant/qdrant
   #   volumes:
   #     - ./qdrant_storage:/qdrant/storage
   #   restart: unless-stopped
 
-  # Local LLM server, image not chosen yet. Owner: A.
+  # Local LLM server. Owner: A (sprint 2, task 15).
   # llm:
   #   image: <tbd>
   #   restart: unless-stopped
+
+volumes:
+  postgres_data:
