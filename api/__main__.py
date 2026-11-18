@@ -22,6 +22,8 @@ def main() -> None:
         level=settings.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    if settings.rag_engine != "stub" and not settings.database_url:
+        sys.exit("DATABASE_URL is required. Run alembic upgrade head before starting the API.")
     try:
         engine = load_engine(settings.rag_engine)
     except ValueError as exc:

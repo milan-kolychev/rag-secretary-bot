@@ -25,7 +25,7 @@ class Settings(BaseSettings):
             столько принимает `POST /ask` (см. `api/openapi.yaml`).
         api_url: Адрес API ядра. Если не задан, бот работает с заглушкой.
         api_token: Сервисный токен API, обязателен при заданном `api_url`.
-        answer_timeout: Сколько секунд ждать ответ `POST /ask`.
+        answer_timeout: Per HTTP operation timeout; total queue waiting uses polling.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

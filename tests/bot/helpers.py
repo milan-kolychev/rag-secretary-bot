@@ -4,7 +4,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import SendMessage
+from aiogram.methods import EditMessageText, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 USER_ID = 1001
@@ -25,7 +25,13 @@ class FakeSession(BaseSession):
         timeout: int | None = None,  # noqa: ASYNC109 - signature of BaseSession
     ) -> Any:
         self.requests.append(method)
-        # Handlers don't use results of Bot API calls.
+        if isinstance(method, SendMessage):
+            return Message(
+                message_id=99,
+                date=datetime.now(UTC),
+                chat=Chat(id=method.chat_id, type="private"),
+                text=method.text,
+            ).as_(bot)
         return True
 
     async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncGenerator[bytes, None]:
@@ -36,7 +42,12 @@ class FakeSession(BaseSession):
         pass
 
     def sent_texts(self) -> list[str]:
-        return [r.text for r in self.requests if isinstance(r, SendMessage)]
+        return [
+            r.text
+            for r in self.requests
+            if isinstance(r, (SendMessage, EditMessageText))
+            and r.text != "⏳ Обрабатываю ваш запрос, пожалуйста, подождите"
+        ]
 
 
 def make_message(text: str | None = None, *, chat_type: str = "private", **kwargs: Any) -> Message:

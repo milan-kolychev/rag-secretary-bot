@@ -58,7 +58,7 @@ def test_answered_requires_text() -> None:
 
 def test_settings_defaults() -> None:
     settings = ApiSettings(_env_file=None, api_token="t")
-    assert (settings.rag_engine, settings.rag_timeout, settings.api_port) == ("stub", 25.0, 8000)
+    assert (settings.rag_engine, settings.rag_timeout, settings.api_port) == ("stub", 130.0, 8000)
 
 
 def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

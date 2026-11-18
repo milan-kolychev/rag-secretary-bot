@@ -1,4 +1,5 @@
 """Extract text from real TXT, DOCX and text-based PDF files for indexing."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,6 +26,12 @@ def read_document(path: Path) -> list[DocumentPart]:
         # Support UTF-8 TXT files, including those saved with a BOM.
         return [DocumentPart(text=path.read_text(encoding="utf-8-sig"))]
     if suffix == ".docx":
+        from zipfile import ZipFile
+
+        with ZipFile(path) as archive:
+            members = archive.infolist()
+            if len(members) > 2000 or sum(item.file_size for item in members) > 100 * 1024 * 1024:
+                raise ValueError("DOCX expanded archive exceeds safe processing limits")
         from docx import Document
 
         doc = Document(path)

@@ -204,3 +204,9 @@ docs: describe environment variables
 |---|---|
 | Неищенко А.А. (A) | LLM, эмбеддинги, Qdrant, PostgreSQL, загрузка документов, n8n (`worker/`) |
 | Колычев М.Н. (B) | Telegram-бот, API, интерфейс, передача вопросов секретарю, тесты, развёртывание (`bot/`, `api/`) |
+# Persistent RAG deployment
+
+See [operations and remote-service startup](docs/operations.md) for history, token budgets,
+the PostgreSQL FIFO queue, spam protection, document versions, migrations and Windows commands.
+Use `RAG_ENGINE=worker.rag:create_engine` for production. Older prototype notes above may
+describe the pre-persistence workflow; the operations guide describes the current implementation.

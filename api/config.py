@@ -4,18 +4,20 @@ from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+
+from core.config import PersistenceSettings
 
 
-class ApiSettings(BaseSettings):
+class ApiSettings(PersistenceSettings):
     """Настройки API.
 
     Attributes:
         api_token: Сервисный токен; бот и n8n передают его в `Authorization: Bearer`.
         rag_engine: `stub` или путь к фабрике движка в виде `модуль:функция`,
             например `worker.rag:create_engine`.
-        rag_timeout: Сколько секунд ждать ответ движка. Должно быть меньше
-            `ANSWER_TIMEOUT` бота, чтобы бот получил понятную ошибку, а не обрыв.
+        rag_timeout: Processing deadline after dequeue, excluding queue wait.
+            The bot uses short HTTP polls rather than waiting in a single request.
         api_host: Адрес, на котором слушает сервер.
         api_port: Порт сервера.
         log_level: Уровень логирования.
@@ -25,7 +27,7 @@ class ApiSettings(BaseSettings):
 
     api_token: SecretStr = Field(default=SecretStr(""), validate_default=True)
     rag_engine: str = "stub"
-    rag_timeout: float = Field(default=25.0, gt=0)
+    rag_timeout: float = Field(default=130.0, gt=0)
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, gt=0, lt=65536)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

@@ -3,8 +3,7 @@
 from bot import texts
 from bot.services.answer_client import Answer, Source
 
-# Telegram counts the limit in UTF-16 code units, len() counts code points. The difference
-# only matters for characters outside the BMP (emoji), which answers rarely contain.
+# Telegram counts UTF-16 code units, including surrogate pairs for emoji.
 MESSAGE_LIMIT = 4096
 
 
@@ -40,26 +39,42 @@ def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
     Returns:
         Список частей; для короткого текста — список из одного элемента.
     """
+    if limit < 2:
+        raise ValueError("Message limit must be at least two UTF-16 code units")
     return _split(text, limit, ("\n\n", "\n"))
 
 
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _split(text: str, limit: int, separators: tuple[str, ...]) -> list[str]:
-    if len(text) <= limit:
+    if _units(text) <= limit:
         return [text]
     if not separators:
-        return [text[i : i + limit] for i in range(0, len(text), limit)]
+        parts, current, size = [], [], 0
+        for character in text:
+            width = 2 if ord(character) > 0xFFFF else 1
+            if size + width > limit:
+                parts.append("".join(current))
+                current, size = [], 0
+            current.append(character)
+            size += width
+        if current:
+            parts.append("".join(current))
+        return parts
 
     separator, rest = separators[0], separators[1:]
     parts: list[str] = []
     current = ""
     for piece in text.split(separator):
         candidate = f"{current}{separator}{piece}" if current else piece
-        if len(candidate) <= limit:
+        if _units(candidate) <= limit:
             current = candidate
             continue
         if current:
             parts.append(current)
-        if len(piece) <= limit:
+        if _units(piece) <= limit:
             current = piece
         else:
             # Keep the tail of an oversized piece open so the next pieces can join it.

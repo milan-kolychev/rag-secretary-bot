@@ -72,10 +72,12 @@ async def test_answer_is_sent(state: FSMContext, bot: AsyncMock, settings: Setti
 
     assert client.questions == [(QUESTION, 1)]
     message.answer.assert_awaited_once()
-    text = message.answer.await_args.args[0]
+    message.answer.assert_awaited_once_with(texts.PROCESSING)
+    edited = message.answer.return_value.edit_text
+    text = edited.await_args.args[0]
     assert text.startswith("Пересдача в феврале.")
     assert texts.SOURCES_HEADER in text
-    assert message.answer.await_args.kwargs["reply_markup"] == answer_keyboard("a1")
+    assert edited.await_args.kwargs["reply_markup"] == answer_keyboard("a1")
     assert await state.get_state() is None
 
 
@@ -97,7 +99,9 @@ async def test_no_answer(state: FSMContext, bot: AsyncMock, settings: Settings) 
 
     await handle_question(message, state, bot, client, settings)
 
-    message.answer.assert_awaited_once_with(texts.NO_ANSWER, reply_markup=secretary_keyboard("a1"))
+    message.answer.return_value.edit_text.assert_awaited_once_with(
+        texts.NO_ANSWER, reply_markup=secretary_keyboard("a1")
+    )
 
 
 async def test_escalated(state: FSMContext, bot: AsyncMock, settings: Settings) -> None:
@@ -106,7 +110,7 @@ async def test_escalated(state: FSMContext, bot: AsyncMock, settings: Settings) 
 
     await handle_question(message, state, bot, client, settings)
 
-    message.answer.assert_awaited_once_with(texts.ESCALATED)
+    message.answer.return_value.edit_text.assert_awaited_once_with(texts.ESCALATED)
 
 
 async def test_invalid_question_keeps_state(
@@ -131,7 +135,7 @@ async def test_client_error(
     with caplog.at_level(logging.DEBUG):
         await handle_question(message, state, bot, client, settings)
 
-    message.answer.assert_awaited_once_with(texts.ANSWER_ERROR)
+    message.answer.return_value.edit_text.assert_awaited_once_with(texts.ANSWER_ERROR)
     assert await state.get_state() == QuestionFlow.waiting_question
     assert "AnswerTimeoutError" in caplog.text
     assert "user_id=1" in caplog.text
@@ -147,7 +151,7 @@ async def test_unexpected_error(
     with caplog.at_level(logging.DEBUG):
         await handle_question(message, state, bot, client, settings)
 
-    message.answer.assert_awaited_once_with(texts.ANSWER_ERROR)
+    message.answer.return_value.edit_text.assert_awaited_once_with(texts.ANSWER_ERROR)
     assert "ValueError" in caplog.text
     assert "test_question.py" in caplog.text  # traceback is logged
     assert QUESTION not in caplog.text

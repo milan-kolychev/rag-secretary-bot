@@ -17,6 +17,12 @@ RUN uv sync --frozen --no-dev --no-install-project --no-cache
 # When it is ready: add its dependencies (torch for BGE-M3 and others) to the image
 # and copy worker/ here as well.
 COPY api ./api
+COPY core ./core
+COPY worker ./worker
+COPY migrations ./migrations
+COPY alembic.ini ./
+
+ENV HF_HOME=/tmp/huggingface
 
 RUN useradd --system --no-create-home api
 USER api
@@ -25,4 +31,4 @@ ENV PATH="/app/.venv/bin:$PATH" \
     API_HOST=0.0.0.0 \
     API_PORT=8000
 EXPOSE 8000
-CMD ["python", "-m", "api"]
+CMD ["sh", "-c", "alembic upgrade head && python -m api"]

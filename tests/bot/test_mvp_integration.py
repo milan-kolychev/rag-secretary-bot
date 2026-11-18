@@ -9,7 +9,7 @@ import uuid
 import httpx
 import pytest
 from aiogram import Bot, Dispatcher
-from aiogram.methods import SendMessage
+from aiogram.methods import EditMessageText, SendMessage
 from aiogram.types import InlineKeyboardMarkup
 
 from api.app import create_app
@@ -90,7 +90,9 @@ async def test_student_gets_answer_with_sources_and_buttons(bot: Bot, session: F
 
     await dp.feed_update(bot, message_update("Как получить справку об обучении?"))
 
-    (sent,) = [r for r in session.requests if isinstance(r, SendMessage)]
+    (progress,) = [r for r in session.requests if isinstance(r, SendMessage)]
+    assert progress.text == texts.PROCESSING
+    (sent,) = [r for r in session.requests if isinstance(r, EditMessageText)]
     assert sent.text.startswith("Справку об обучении выдаёт деканат")
     assert f"{texts.SOURCES_HEADER}\n• Регламент деканата, п. 4.2" in sent.text
     assert isinstance(sent.reply_markup, InlineKeyboardMarkup)

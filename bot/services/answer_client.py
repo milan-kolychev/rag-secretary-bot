@@ -57,6 +57,14 @@ class AnswerUnavailableError(AnswerClientError):
     """Сервис ответов недоступен."""
 
 
+class AnswerBusyError(AnswerClientError):
+    pass
+
+
+class AnswerQueueFullError(AnswerClientError):
+    pass
+
+
 class AnswerClient(Protocol):
     """Интерфейс сервиса ответов, через который бот задаёт вопросы."""
 

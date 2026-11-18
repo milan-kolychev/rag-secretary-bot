@@ -17,6 +17,7 @@ ErrorCode = Literal[
     "not_found",
     "method_not_allowed",
     "conflict",
+    "queue_full",
     "too_large",
     "validation_error",
     "rag_unavailable",
@@ -51,6 +52,7 @@ class AskRequest(_Strict):
 
     question: Question
     user_id: TelegramId
+    chat_id: Annotated[int, Field(ge=-(2**63), le=2**63 - 1)] | None = None
 
 
 class Source(_Strict):

@@ -7,18 +7,21 @@ import time
 import traceback
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from threading import Lock
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, Response
-from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.config import ApiSettings
-from api.engine import RagAnswer, RagEngine, RagUnavailableError
+from api.engine import RagEngine
 from api.schemas import AskRequest, AskResponse, Error, ErrorCode, ErrorDetail, Health
+from core.db import Database
+from core.queue import QueueRejected, RequestQueue
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,9 @@ def error_response(status_code: int, code: ErrorCode, message: str) -> JSONRespo
     return JSONResponse(status_code=status_code, content=body.model_dump())
 
 
-def create_app(settings: ApiSettings, engine: RagEngine) -> FastAPI:
+def create_app(
+    settings: ApiSettings, engine: RagEngine, *, database=None, documents=None
+) -> FastAPI:
     """Создаёт приложение.
 
     Args:
@@ -67,12 +72,77 @@ def create_app(settings: ApiSettings, engine: RagEngine) -> FastAPI:
     Returns:
         Приложение FastAPI.
     """
+    db = database or Database(settings.database_url)
+    queue = RequestQueue(db, settings, engine)
+    runner = None
+    stopping = False
+    document_init = Lock()
+
+    async def consume():
+        while not stopping:
+            try:
+                processed = await asyncio.to_thread(queue.process_one)
+            except Exception as exc:
+                logger.error("queue_poll_failed error=%s", type(exc).__name__)
+                processed = False
+            await asyncio.sleep(0 if processed else settings.queue_poll_interval)
+
+    def ensure_runner():
+        nonlocal runner
+        if runner is None or runner.done():
+            runner = asyncio.create_task(consume())
+
+    @asynccontextmanager
+    async def lifespan(app):
+        nonlocal stopping
+        ensure_runner()
+        try:
+            yield
+        finally:
+            stopping = True
+            if runner:
+                await runner
+            close = getattr(engine, "close", None)
+            if close:
+                await asyncio.to_thread(close)
+            db.engine.dispose()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="RAG-система для секретарей ФПИ",
         version="1.0.0",
         description="Контракт описан в api/openapi.yaml.",
     )
     expected_token = settings.api_token.get_secret_value()
+    app.state.queue = queue
+
+    def document_service():
+        nonlocal documents
+        with document_init:
+            return initialize_documents()
+
+    def initialize_documents():
+        nonlocal documents
+        if documents is None:
+            if not hasattr(engine, "embedder") or not hasattr(engine, "store"):
+                raise ApiError(503, "rag_unavailable", "Document indexing requires the RAG engine")
+            from transformers import AutoTokenizer
+
+            from worker.documents import DocumentService
+
+            documents = DocumentService(
+                db, engine.store, engine.embedder, AutoTokenizer.from_pretrained("BAAI/bge-m3")
+            )
+        return documents
+
+    async def queue_call(method, *args):
+        try:
+            return await asyncio.to_thread(method, *args)
+        except QueueRejected:
+            raise
+        except Exception as exc:
+            logger.warning("queue_storage_error error=%s", type(exc).__name__)
+            raise ApiError(503, "rag_unavailable", "Request storage is unavailable") from None
 
     async def require_token(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -81,6 +151,39 @@ def create_app(settings: ApiSettings, engine: RagEngine) -> FastAPI:
             credentials.credentials.encode(), expected_token.encode()
         ):
             raise ApiError(401, "unauthorized", "Invalid or missing API token")
+
+    from api.documents import document_router
+
+    app.include_router(
+        document_router(document_service, ApiError), dependencies=[Depends(require_token)]
+    )
+
+    @app.post("/requests", status_code=202, dependencies=[Depends(require_token)])
+    async def submit(request: AskRequest):
+        try:
+            request_id = await queue_call(queue.submit, request)
+        except QueueRejected as exc:
+            raise ApiError(
+                409 if exc.code == "conflict" else 429,
+                exc.code,
+                "Previous request is busy"
+                if exc.code == "conflict"
+                else "Request queue is full; try again later",
+            ) from None
+        ensure_runner()
+        return {"request_id": request_id, "state": "queued"}
+
+    @app.get("/requests/{request_id}", dependencies=[Depends(require_token)])
+    async def request_status(request_id: uuid.UUID):
+        result = await queue_call(queue.get, request_id)
+        if result is None:
+            raise ApiError(404, "not_found", "Request not found")
+        return result
+
+    @app.delete("/requests/{request_id}", status_code=204, dependencies=[Depends(require_token)])
+    async def acknowledge(request_id: uuid.UUID):
+        await queue_call(queue.acknowledge, request_id)
+        return Response(status_code=204)
 
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -143,42 +246,27 @@ def create_app(settings: ApiSettings, engine: RagEngine) -> FastAPI:
     @app.post("/ask", tags=["ask"], dependencies=[Depends(require_token)])
     async def ask(request: AskRequest) -> AskResponse:
         """Ответ на вопрос студента по документам."""
-        started = time.perf_counter()
+        accepted = await submit(request)
+        request_id = accepted["request_id"]
         try:
-            raw = await asyncio.wait_for(
-                run_in_threadpool(engine.answer, request.question),
-                timeout=settings.rag_timeout,
-            )
-            # The engine may return its own model with the same fields.
-            result = RagAnswer.model_validate(raw, from_attributes=True)
-        except TimeoutError:
-            raise ApiError(
-                503, "rag_timeout", f"RAG engine did not answer in {settings.rag_timeout:g} s"
-            ) from None
-        except RagUnavailableError as exc:
-            logger.warning("RAG engine unavailable: %s", exc)
-            raise ApiError(503, "rag_unavailable", "RAG engine is unavailable") from None
-        except Exception as exc:
-            # Handled here rather than by the app-level handler: Starlette re-raises
-            # unhandled errors and uvicorn would log their message, which may hold the question.
-            _log_unexpected(exc, request.user_id)
-            raise ApiError(500, "internal_error", "RAG engine failed") from None
-
-        answered = result.status == "answered"
-        response = AskResponse(
-            answer_id=uuid.uuid4(),
-            status=result.status,
-            text=result.text if answered else "",
-            sources=result.sources if answered else [],
-            ticket_id=None,
-        )
-        logger.info(
-            "ask: user_id=%s status=%s sources=%d latency=%.0fms",
-            request.user_id,
-            response.status,
-            len(response.sources),
-            (time.perf_counter() - started) * 1000,
-        )
-        return response
+            while True:
+                job = await queue_call(queue.get, request_id)
+                if job["state"] == "done":
+                    response = AskResponse.model_validate(job["result"])
+                    logger.info(
+                        "ask: user_id=%s status=%s sources=%d",
+                        request.user_id,
+                        response.status,
+                        len(response.sources),
+                    )
+                    return response
+                if job["state"] == "failed":
+                    code = job["error"]
+                    raise ApiError(
+                        500 if code == "internal_error" else 503, code, "RAG engine failed"
+                    )
+                await asyncio.sleep(0.02)
+        finally:
+            await queue_call(queue.acknowledge, request_id)
 
     return app

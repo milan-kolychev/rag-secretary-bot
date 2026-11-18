@@ -35,6 +35,122 @@ tags:
     description: Поиск по документам для секретаря (эпик Э3)
 
 paths:
+  /documents/{document_id}/versions/{version}/retry:
+    post:
+      tags: [documents]
+      operationId: retryDocumentVersion
+      summary: Retry from the durable original source without creating a duplicate version
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: version
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: Version metadata after retry (inspect status)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /requests:
+    post:
+      tags: [ask]
+      operationId: submitRequest
+      summary: Submit a question to the bounded global FIFO queue
+      x-sprint: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+      responses:
+        "202":
+          description: Accepted; poll request_id until done or failed, acknowledge after delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id, state]
+                properties:
+                  request_id: {type: string, format: uuid}
+                  state: {const: queued}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: This chat/user already has an outstanding request
+        "429":
+          description: Queue is full (includes running requests)
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /requests/{request_id}:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [ask]
+      operationId: getRequest
+      summary: Poll a queued request; result is AskResponse when state is done
+      x-sprint: 3
+      responses:
+        "200":
+          description: Request state and optional result or error code
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [ask]
+      operationId: acknowledgeRequest
+      summary: Acknowledge final delivery or cancel a request which has not started
+      x-sprint: 3
+      responses:
+        "204":
+          description: Delivery acknowledged; idempotent
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /documents/{document_id}/versions:
+    get:
+      tags: [documents]
+      operationId: listDocumentVersions
+      summary: List versions and authoritative active_version
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document ID, active version and items (version metadata)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /documents/{document_id}/versions/{version}/restore:
+    post:
+      tags: [documents]
+      operationId: restoreDocumentVersion
+      summary: Reindex the original source and activate an indexed historical version
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: version
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: Version list and updated active_version
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /health:
     get:
       tags: [service]
@@ -56,8 +172,8 @@ paths:
       operationId: ask
       summary: Ответ на вопрос студента по документам
       description: |
-        Синхронный запрос. Целевое время ответа p95 не больше 10 с; бот ждёт ответ
-        не дольше `ANSWER_TIMEOUT` (по умолчанию 30 с).
+        Compatibility synchronous endpoint using the same durable queue. Queue waiting
+        is separate from RAG_TIMEOUT. The bot uses /requests polling instead.
 
         Статусы ответа:
         - `answered`: ответ найден, `text` и `sources` заполнены;
@@ -283,11 +399,12 @@ paths:
       operationId: uploadDocument
       summary: Загрузка документа или его новой версии
       description: |
-        Файл сохраняется, индексация выполняется в worker асинхронно; статус
-        документа проверяется через `GET /documents/{document_id}`.
-        Если документ с таким `title` уже есть, создаётся новая версия, а старые
-        фрагменты удаляются из Qdrant после индексации новой.
-        Используется ботом (секретарь) и n8n (синхронизация с Яндекс.Диском).
+        Synchronous worker indexing; allow time for the execution queue and embedding.
+        Supply doc_id explicitly to update a logical document. Filenames and titles
+        never identify replacements. Same checksum/doc_id reuses a version; a failed
+        upload retries that version. Old chunks remain stored and are excluded by the
+        PostgreSQL active-version pointer. No existing upload endpoint was implemented
+        before this revision; the previously planned 202 response is now 201.
       x-sprint: 3
       requestBody:
         required: true
@@ -296,8 +413,8 @@ paths:
             schema:
               $ref: "#/components/schemas/DocumentUpload"
       responses:
-        "202":
-          description: Документ принят в индексацию
+        "201":
+          description: Version processed; inspect status (indexed or failed) and is_active
           content:
             application/json:
               schema:
@@ -319,11 +436,19 @@ paths:
         - $ref: "#/components/parameters/DocumentId"
       responses:
         "200":
-          description: Документ
+          description: Logical document ID, active_version and items (all version metadata)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Document"
+                type: object
+                required: [document_id, active_version, items]
+                properties:
+                  document_id: {type: string, format: uuid}
+                  active_version: {type: [integer, "null"]}
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -505,6 +630,7 @@ components:
                 - not_found
                 - method_not_allowed
                 - conflict
+                - queue_full
                 - too_large
                 - validation_error
                 - rag_unavailable
@@ -527,6 +653,12 @@ components:
             отклоняется с `validation_error`.
         user_id:
           $ref: "#/components/schemas/TelegramId"
+
+        chat_id:
+          type: [integer, "null"]
+          minimum: -9223372036854775808
+          maximum: 9223372036854775807
+          description: Telegram chat ID; defaults to user_id for legacy private-chat clients
 
     AnswerStatus:
       type: string
@@ -694,6 +826,10 @@ components:
       type: object
       required: [file, title]
       properties:
+        doc_id:
+          type: string
+          format: uuid
+          description: Stable logical document ID; omit only when creating a separate document
         file:
           type: string
           contentMediaType: application/octet-stream
@@ -717,6 +853,8 @@ components:
         - error
       additionalProperties: false
       properties:
+        is_active:
+          type: boolean
         document_id:
           $ref: "#/components/schemas/Id"
         title:
